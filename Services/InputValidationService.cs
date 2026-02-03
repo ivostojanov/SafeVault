@@ -8,6 +8,7 @@ namespace SafeVault.Services
         ValidationResult ValidateUser(string username, string email);
         bool IsValidUsername(string username);
         bool IsValidEmail(string email);
+        ValidationResult ValidateComment(string comment);
     }
 
     public class ValidationResult
@@ -94,6 +95,80 @@ namespace SafeVault.Services
             {
                 return false;
             }
+        }
+
+        /// <summary>
+        /// Validates comment content to prevent XSS and injection attacks.
+        /// Implements defense-in-depth with multiple validation layers.
+        /// </summary>
+        public ValidationResult ValidateComment(string comment)
+        {
+            var result = new ValidationResult { IsValid = true };
+
+            if (string.IsNullOrWhiteSpace(comment))
+            {
+                result.IsValid = false;
+                result.Errors.Add("Comment is required");
+                return result;
+            }
+
+            if (comment.Length < 1)
+            {
+                result.IsValid = false;
+                result.Errors.Add("Comment must be at least 1 character");
+            }
+
+            if (comment.Length > 1000)
+            {
+                result.IsValid = false;
+                result.Errors.Add("Comment cannot exceed 1000 characters");
+            }
+
+            // Block common XSS patterns
+            var xssPatterns = new[]
+            {
+                @"<script[\s\S]*?>", // Script tags
+                @"javascript:", // JavaScript protocol
+                @"on\w+\s*=", // Event handlers (onclick, onerror, etc.)
+                @"<iframe", // Iframe injection
+                @"<object", // Object tag
+                @"<embed", // Embed tag
+                @"eval\s*\(", // Eval function
+                @"expression\s*\(", // CSS expression
+                @"vbscript:", // VBScript protocol
+                @"data:text/html" // Data URI with HTML
+            };
+
+            foreach (var pattern in xssPatterns)
+            {
+                if (Regex.IsMatch(comment, pattern, RegexOptions.IgnoreCase))
+                {
+                    result.IsValid = false;
+                    result.Errors.Add("Comment contains disallowed content that could pose a security risk");
+                    break;
+                }
+            }
+
+            // Block SQL injection patterns
+            var sqlPatterns = new[]
+            {
+                @"('|(--)|;|\*|/\*|\*/|@@|@|char|nchar|varchar|nvarchar|alter|begin|cast|create|cursor|declare|delete|drop|end|exec|execute|fetch|insert|kill|select|sys|sysobjects|syscolumns|table|update)",
+                @"\bOR\b.*=.*", // OR with equals
+                @"\bAND\b.*=.*", // AND with equals
+                @"UNION[\s\S]*SELECT" // UNION SELECT
+            };
+
+            foreach (var pattern in sqlPatterns)
+            {
+                if (Regex.IsMatch(comment, pattern, RegexOptions.IgnoreCase))
+                {
+                    result.IsValid = false;
+                    result.Errors.Add("Comment contains disallowed SQL keywords");
+                    break;
+                }
+            }
+
+            return result;
         }
     }
 }

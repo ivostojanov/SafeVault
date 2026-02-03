@@ -655,4 +655,340 @@ app.MapPost("/delete-user/{userId}", async (int userId, SafeVaultContext db) =>
 .WithName("DeleteUser")
 .WithOpenApi();
 
+// ============ VULNERABLE ENDPOINTS (FOR EDUCATIONAL DEMONSTRATION) ============
+// WARNING: These endpoints contain INTENTIONAL security vulnerabilities
+// They demonstrate what NOT to do in production code
+// FOR LEARNING PURPOSES ONLY - DO NOT USE IN PRODUCTION
+
+// Vulnerable Endpoint 1: SQL Injection via String Concatenation
+app.MapGet("/vulnerable/search-user", async (string username, SafeVaultContext db) =>
+{
+    try
+    {
+        // VULNERABILITY: String concatenation creates SQL injection risk
+        // This allows attackers to inject malicious SQL code
+        var sqlQuery = $"SELECT * FROM Users WHERE Username = '{username}'";
+        
+        // DANGER: Executing raw SQL with user input
+        var users = await db.Users
+            .FromSqlRaw(sqlQuery)
+            .ToListAsync();
+        
+        // VULNERABILITY: No output encoding
+        return Results.Ok(users);
+    }
+    catch (Exception ex)
+    {
+        // VULNERABILITY: Exposing error details
+        return Results.BadRequest(new { error = ex.Message });
+    }
+})
+.WithName("VulnerableSearchUser")
+.WithTags("Vulnerable")
+.WithOpenApi();
+
+// Vulnerable Endpoint 2: XSS via Missing Output Encoding
+app.MapPost("/vulnerable/submit-comment", async (HttpContext context) =>
+{
+    var form = await context.Request.ReadFormAsync();
+    var comment = form["comment"].ToString();
+    
+    // VULNERABILITY: No input validation or sanitization
+    // VULNERABILITY: No output encoding - XSS risk
+    
+    return Results.Ok(new
+    {
+        success = true,
+        // Raw output without encoding - allows script injection
+        message = $"Comment received: {comment}",
+        timestamp = DateTime.UtcNow
+    });
+})
+.WithName("VulnerableSubmitComment")
+.WithTags("Vulnerable")
+.WithOpenApi();
+
+// Vulnerable Endpoint 3: XSS in HTML Response
+app.MapGet("/vulnerable/display-user/{userId}", async (int userId, SafeVaultContext db) =>
+{
+    var user = await db.Users.FindAsync(userId);
+    
+    if (user == null)
+    {
+        return Results.NotFound(new { error = "User not found" });
+    }
+    
+    // VULNERABILITY: No HTML encoding on output - XSS risk
+    // Any malicious content in username/email will be executed
+    return Results.Content($@"
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>User Profile</title>
+            <style>
+                body {{ font-family: Arial, sans-serif; margin: 20px; }}
+                .profile {{ border: 1px solid #ccc; padding: 20px; border-radius: 5px; }}
+            </style>
+        </head>
+        <body>
+            <div class='profile'>
+                <h1>User Profile</h1>
+                <p><strong>User ID:</strong> {user.UserID}</p>
+                <p><strong>Username:</strong> {user.Username}</p>
+                <p><strong>Email:</strong> {user.Email}</p>
+                <p><strong>Role:</strong> {user.Role}</p>
+            </div>
+        </body>
+        </html>
+    ", "text/html");
+})
+.WithName("VulnerableDisplayUser")
+.WithTags("Vulnerable")
+.WithOpenApi();
+
+// Vulnerable Endpoint 4: SQL Injection in Search by Email
+app.MapGet("/vulnerable/search-email", async (string email, SafeVaultContext db) =>
+{
+    try
+    {
+        // VULNERABILITY: String interpolation in SQL query
+        var sqlQuery = $"SELECT * FROM Users WHERE Email = '{email}'";
+        
+        var users = await db.Users
+            .FromSqlRaw(sqlQuery)
+            .ToListAsync();
+        
+        return Results.Ok(users);
+    }
+    catch (Exception ex)
+    {
+        return Results.BadRequest(new { error = ex.Message });
+    }
+})
+.WithName("VulnerableSearchEmail")
+.WithTags("Vulnerable")
+.WithOpenApi();
+
+// ============ SECURE FIXED ENDPOINTS (PROPER IMPLEMENTATION) ============
+// These endpoints demonstrate the correct way to handle security
+// They show the fixes applied to prevent SQL injection and XSS attacks
+
+// Secure Endpoint 1: Search User with Parameterized Query
+app.MapGet("/secure/search-user", async (string username, SafeVaultContext db, IInputValidationService validator) =>
+{
+    // FIX 1: Input validation
+    if (!validator.IsValidUsername(username))
+    {
+        return Results.BadRequest(new { 
+            success = false, 
+            error = "Invalid username format" 
+        });
+    }
+
+    try
+    {
+        // FIX 2: Parameterized query (EF Core handles this automatically)
+        // No string concatenation - parameters are passed separately
+        var users = await db.Users
+            .Where(u => u.Username == username)
+            .Select(u => new
+            {
+                u.UserID,
+                // FIX 3: Output encoding
+                Username = System.Web.HttpUtility.HtmlEncode(u.Username),
+                Email = System.Web.HttpUtility.HtmlEncode(u.Email),
+                u.Role,
+                u.IsActive
+            })
+            .ToListAsync();
+
+        if (users.Count == 0)
+        {
+            return Results.NotFound(new { 
+                success = false, 
+                message = "No users found" 
+            });
+        }
+
+        return Results.Ok(new { 
+            success = true, 
+            count = users.Count, 
+            users 
+        });
+    }
+    catch
+    {
+        // FIX 4: Generic error message (no information disclosure)
+        return Results.StatusCode(StatusCodes.Status500InternalServerError);
+    }
+})
+.WithName("SecureSearchUser")
+.WithTags("Secure")
+.WithOpenApi();
+
+// Secure Endpoint 2: Submit Comment with Validation and Encoding
+app.MapPost("/secure/submit-comment", async (HttpContext context, IInputValidationService validator) =>
+{
+    var form = await context.Request.ReadFormAsync();
+    var comment = form["comment"].ToString();
+
+    // FIX 1: Input validation
+    var validationResult = validator.ValidateComment(comment);
+    if (!validationResult.IsValid)
+    {
+        return Results.BadRequest(new
+        {
+            success = false,
+            errors = validationResult.Errors
+        });
+    }
+
+    // FIX 2: Output encoding
+    var encodedComment = System.Web.HttpUtility.HtmlEncode(comment);
+
+    return Results.Ok(new
+    {
+        success = true,
+        message = $"Comment received: {encodedComment}",
+        timestamp = DateTime.UtcNow,
+        note = "Comment has been validated and encoded for security"
+    });
+})
+.WithName("SecureSubmitComment")
+.WithTags("Secure")
+.WithOpenApi();
+
+// Secure Endpoint 3: Display User with HTML Encoding
+app.MapGet("/secure/display-user/{userId}", async (int userId, SafeVaultContext db) =>
+{
+    if (userId <= 0)
+    {
+        return Results.BadRequest(new { error = "Invalid user ID" });
+    }
+
+    var user = await db.Users.FindAsync(userId);
+
+    if (user == null)
+    {
+        return Results.NotFound(new { error = "User not found" });
+    }
+
+    // FIX: HTML encoding on all output
+    var encodedUsername = System.Web.HttpUtility.HtmlEncode(user.Username);
+    var encodedEmail = System.Web.HttpUtility.HtmlEncode(user.Email);
+    var encodedRole = System.Web.HttpUtility.HtmlEncode(user.Role);
+
+    return Results.Content($@"
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>User Profile (Secure)</title>
+            <style>
+                body {{ 
+                    font-family: Arial, sans-serif; 
+                    margin: 20px; 
+                    background-color: #f5f5f5;
+                }}
+                .profile {{ 
+                    background-color: white;
+                    border: 1px solid #ddd; 
+                    padding: 20px; 
+                    border-radius: 5px;
+                    max-width: 600px;
+                    margin: 0 auto;
+                }}
+                .security-badge {{
+                    background-color: #4CAF50;
+                    color: white;
+                    padding: 5px 10px;
+                    border-radius: 3px;
+                    font-size: 12px;
+                    display: inline-block;
+                    margin-bottom: 10px;
+                }}
+                h1 {{ color: #333; }}
+                .field {{ margin: 10px 0; }}
+                .label {{ font-weight: bold; color: #666; }}
+            </style>
+        </head>
+        <body>
+            <div class='profile'>
+                <span class='security-badge'>🔒 Secured with HTML Encoding</span>
+                <h1>User Profile</h1>
+                <div class='field'>
+                    <span class='label'>User ID:</span> {user.UserID}
+                </div>
+                <div class='field'>
+                    <span class='label'>Username:</span> {encodedUsername}
+                </div>
+                <div class='field'>
+                    <span class='label'>Email:</span> {encodedEmail}
+                </div>
+                <div class='field'>
+                    <span class='label'>Role:</span> {encodedRole}
+                </div>
+                <div class='field'>
+                    <span class='label'>Status:</span> {(user.IsActive ? "Active" : "Inactive")}
+                </div>
+            </div>
+        </body>
+        </html>
+    ", "text/html");
+})
+.WithName("SecureDisplayUser")
+.WithTags("Secure")
+.WithOpenApi();
+
+// Secure Endpoint 4: Search by Email with Validation
+app.MapGet("/secure/search-email", async (string email, SafeVaultContext db, IInputValidationService validator) =>
+{
+    // FIX 1: Input validation
+    if (!validator.IsValidEmail(email))
+    {
+        return Results.BadRequest(new { 
+            success = false, 
+            error = "Invalid email format" 
+        });
+    }
+
+    try
+    {
+        // FIX 2: Parameterized query via LINQ
+        var users = await db.Users
+            .Where(u => u.Email == email)
+            .Select(u => new
+            {
+                u.UserID,
+                // FIX 3: Output encoding
+                Username = System.Web.HttpUtility.HtmlEncode(u.Username),
+                Email = System.Web.HttpUtility.HtmlEncode(u.Email),
+                u.Role,
+                u.IsActive
+            })
+            .ToListAsync();
+
+        if (users.Count == 0)
+        {
+            return Results.NotFound(new { 
+                success = false, 
+                message = "No users found" 
+            });
+        }
+
+        return Results.Ok(new { 
+            success = true, 
+            count = users.Count, 
+            users 
+        });
+    }
+    catch
+    {
+        // FIX 4: Generic error message
+        return Results.StatusCode(StatusCodes.Status500InternalServerError);
+    }
+})
+.WithName("SecureSearchEmail")
+.WithTags("Secure")
+.WithOpenApi();
+
 app.Run();
