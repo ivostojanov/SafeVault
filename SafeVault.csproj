@@ -4,7 +4,6 @@
     <TargetFramework>net8.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
-    <DefaultItemExcludes>$(DefaultItemExcludes);SafeVault.Tests.disabled/**</DefaultItemExcludes>
   </PropertyGroup>
 
   <ItemGroup>
@@ -12,6 +11,12 @@
     <PackageReference Include="Swashbuckle.AspNetCore" Version="6.6.2" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="8.0.0" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="8.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Remove="SafeVault.Tests/**" />
+    <EmbeddedResource Remove="SafeVault.Tests/**" />
+    <None Remove="SafeVault.Tests/**" />
   </ItemGroup>
 
 </Project>

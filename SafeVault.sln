@@ -5,6 +5,8 @@ VisualStudioVersion = 17.0.31903.59
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SafeVault", "SafeVault.csproj", "{EDB806DF-EF10-4E24-A595-120E7BDF3DC4}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SafeVault.Tests", "SafeVault.Tests/SafeVault.Tests.csproj", "{D40E79B9-688C-4A85-B957-ACF0243DBF9F}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -18,5 +20,9 @@ Global
 		{EDB806DF-EF10-4E24-A595-120E7BDF3DC4}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{EDB806DF-EF10-4E24-A595-120E7BDF3DC4}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{EDB806DF-EF10-4E24-A595-120E7BDF3DC4}.Release|Any CPU.Build.0 = Release|Any CPU
+		{D40E79B9-688C-4A85-B957-ACF0243DBF9F}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{D40E79B9-688C-4A85-B957-ACF0243DBF9F}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{D40E79B9-688C-4A85-B957-ACF0243DBF9F}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{D40E79B9-688C-4A85-B957-ACF0243DBF9F}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 EndGlobal
