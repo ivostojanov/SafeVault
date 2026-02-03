@@ -1,11 +1,9 @@
 using System.ComponentModel.DataAnnotations;
 
-namespace SafeVault.Models
+namespace SafeVault.Models.DTOs
 {
-    public class User
+    public class RegisterRequest
     {
-        public int UserID { get; set; }
-
         [Required(ErrorMessage = "Username is required")]
         [StringLength(100, MinimumLength = 3, ErrorMessage = "Username must be between 3 and 100 characters")]
         [RegularExpression(@"^[a-zA-Z0-9_\-\.]+$", ErrorMessage = "Username can only contain letters, numbers, underscores, hyphens, and dots")]
@@ -16,18 +14,8 @@ namespace SafeVault.Models
         [EmailAddress(ErrorMessage = "Invalid email format")]
         public string Email { get; set; } = string.Empty;
 
-        [Required(ErrorMessage = "Password hash is required")]
-        [StringLength(256, ErrorMessage = "Password hash cannot exceed 256 characters")]
-        public string PasswordHash { get; set; } = string.Empty;
-
-        [Required(ErrorMessage = "Role is required")]
-        [StringLength(50, ErrorMessage = "Role cannot exceed 50 characters")]
-        public string Role { get; set; } = "User";
-
-        public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
-
-        public DateTime? LastLoginAt { get; set; }
-
-        public bool IsActive { get; set; } = true;
+        [Required(ErrorMessage = "Password is required")]
+        [StringLength(128, MinimumLength = 8, ErrorMessage = "Password must be between 8 and 128 characters")]
+        public string Password { get; set; } = string.Empty;
     }
 }

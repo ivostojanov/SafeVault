@@ -1,7 +1,11 @@
 using SafeVault.Data;
 using SafeVault.Services;
 using SafeVault.Models;
+using SafeVault.Models.DTOs;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.IdentityModel.Tokens;
+using System.Text;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -17,6 +21,36 @@ builder.Services.AddDbContext<SafeVaultContext>(options =>
 // Add input validation service
 builder.Services.AddScoped<IInputValidationService, InputValidationService>();
 
+// Add authentication services
+builder.Services.AddScoped<IJwtTokenGenerator, JwtTokenGenerator>();
+builder.Services.AddScoped<IAuthenticationService, AuthenticationService>();
+
+// Configure JWT Authentication
+builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
+    .AddJwtBearer(options =>
+    {
+        options.TokenValidationParameters = new TokenValidationParameters
+        {
+            ValidateIssuer = true,
+            ValidateAudience = true,
+            ValidateLifetime = true,
+            ValidateIssuerSigningKey = true,
+            ValidIssuer = builder.Configuration["JwtSettings:Issuer"],
+            ValidAudience = builder.Configuration["JwtSettings:Audience"],
+            IssuerSigningKey = new SymmetricSecurityKey(
+                Encoding.UTF8.GetBytes(builder.Configuration["JwtSettings:SecretKey"] 
+                    ?? throw new InvalidOperationException("JWT SecretKey not configured"))),
+            ClockSkew = TimeSpan.Zero // No tolerance for expiration
+        };
+    });
+
+// Configure Authorization Policies
+builder.Services.AddAuthorization(options =>
+{
+    options.AddPolicy("AdminOnly", policy => policy.RequireRole("Admin"));
+    options.AddPolicy("UserOrAdmin", policy => policy.RequireRole("User", "Admin"));
+});
+
 var app = builder.Build();
 
 // Configure the HTTP request pipeline.
@@ -27,6 +61,87 @@ if (app.Environment.IsDevelopment())
 }
 
 app.UseHttpsRedirection();
+
+// Add security headers
+app.Use(async (context, next) =>
+{
+    context.Response.Headers.Add("X-Content-Type-Options", "nosniff");
+    context.Response.Headers.Add("X-Frame-Options", "DENY");
+    context.Response.Headers.Add("X-XSS-Protection", "1; mode=block");
+    context.Response.Headers.Add("Strict-Transport-Security", "max-age=31536000");
+    await next();
+});
+
+// Authentication and Authorization middleware
+app.UseAuthentication();
+app.UseAuthorization();
+
+// ============ AUTHENTICATION ENDPOINTS ============
+
+// POST /register - User registration
+app.MapPost("/register", async (RegisterRequest request, IAuthenticationService authService) =>
+{
+    if (request == null)
+    {
+        return Results.BadRequest(new { success = false, error = "Invalid request" });
+    }
+
+    var (success, message, user) = await authService.RegisterUser(
+        request.Username,
+        request.Email,
+        request.Password,
+        "User" // Default role for registration
+    );
+
+    if (!success)
+    {
+        return Results.BadRequest(new { success = false, error = message });
+    }
+
+    return Results.Ok(new
+    {
+        success = true,
+        message = message,
+        user = new
+        {
+            userId = user!.UserID,
+            username = System.Web.HttpUtility.HtmlEncode(user.Username),
+            email = System.Web.HttpUtility.HtmlEncode(user.Email),
+            role = user.Role,
+            createdAt = user.CreatedAt
+        }
+    });
+})
+.WithName("Register")
+.WithOpenApi();
+
+// POST /login - User authentication
+app.MapPost("/login", async (LoginRequest request, IAuthenticationService authService) =>
+{
+    if (request == null)
+    {
+        return Results.BadRequest(new { success = false, error = "Invalid request" });
+    }
+
+    var response = await authService.AuthenticateUser(request.Username, request.Password);
+
+    if (!response.Success)
+    {
+        return Results.Unauthorized();
+    }
+
+    return Results.Ok(new
+    {
+        success = response.Success,
+        message = response.Message,
+        token = response.Token,
+        user = response.User
+    });
+})
+.WithName("Login")
+.WithOpenApi();
+
+// ============ PROTECTED ENDPOINTS ============
 
 // POST endpoint for form submission with secure input validation
 app.MapPost("/submit", async (HttpContext context, SafeVaultContext db, IInputValidationService validator) =>
@@ -84,11 +199,14 @@ app.MapGet("/users", async (SafeVaultContext db) =>
     {
         u.UserID,
         Username = System.Web.HttpUtility.HtmlEncode(u.Username),
-        Email = System.Web.HttpUtility.HtmlEncode(u.Email)
+        Email = System.Web.HttpUtility.HtmlEncode(u.Email),
+        Role = u.Role,
+        IsActive = u.IsActive
     });
 
     return Results.Ok(encodedUsers);
 })
+.RequireAuthorization("UserOrAdmin")
 .WithName("GetUsers")
 .WithOpenApi();
 
@@ -115,7 +233,9 @@ app.MapGet("/user-by-id", async (int userId, SafeVaultContext db) =>
         {
             userID = user.UserID,
             username = System.Web.HttpUtility.HtmlEncode(user.Username),
-            email = System.Web.HttpUtility.HtmlEncode(user.Email)
+            email = System.Web.HttpUtility.HtmlEncode(user.Email),
+            role = user.Role,
+            isActive = user.IsActive
         });
     }
     catch
@@ -123,6 +243,7 @@ app.MapGet("/user-by-id", async (int userId, SafeVaultContext db) =>
         return Results.StatusCode(StatusCodes.Status500InternalServerError);
     }
 })
+.RequireAuthorization("UserOrAdmin")
 .WithName("GetUserById")
 .WithOpenApi();
 
@@ -155,7 +276,9 @@ app.MapGet("/search-user", async (string username, SafeVaultContext db, IInputVa
         {
             u.UserID,
             Username = System.Web.HttpUtility.HtmlEncode(u.Username),
-            Email = System.Web.HttpUtility.HtmlEncode(u.Email)
+            Email = System.Web.HttpUtility.HtmlEncode(u.Email),
+            Role = u.Role,
+            IsActive = u.IsActive
         });
 
         return Results.Ok(encodedUsers);
@@ -165,6 +288,7 @@ app.MapGet("/search-user", async (string username, SafeVaultContext db, IInputVa
         return Results.StatusCode(StatusCodes.Status500InternalServerError);
     }
 })
+.RequireAuthorization("UserOrAdmin")
 .WithName("SearchUser")
 .WithOpenApi();
 
@@ -197,7 +321,9 @@ app.MapGet("/search-email", async (string email, SafeVaultContext db, IInputVali
         {
             u.UserID,
             Username = System.Web.HttpUtility.HtmlEncode(u.Username),
-            Email = System.Web.HttpUtility.HtmlEncode(u.Email)
+            Email = System.Web.HttpUtility.HtmlEncode(u.Email),
+            Role = u.Role,
+            IsActive = u.IsActive
         });
 
         return Results.Ok(encodedUsers);
@@ -207,6 +333,7 @@ app.MapGet("/search-email", async (string email, SafeVaultContext db, IInputVali
         return Results.StatusCode(StatusCodes.Status500InternalServerError);
     }
 })
+.RequireAuthorization("UserOrAdmin")
 .WithName("SearchEmail")
 .WithOpenApi();
 
@@ -258,7 +385,8 @@ app.MapPost("/update-user/{userId}", async (int userId, HttpContext context, Saf
             {
                 userID = user.UserID,
                 username = System.Web.HttpUtility.HtmlEncode(user.Username),
-                email = System.Web.HttpUtility.HtmlEncode(user.Email)
+                email = System.Web.HttpUtility.HtmlEncode(user.Email),
+                role = user.Role
             }
         });
     }
@@ -267,6 +395,7 @@ app.MapPost("/update-user/{userId}", async (int userId, HttpContext context, Saf
         return Results.StatusCode(StatusCodes.Status500InternalServerError);
     }
 })
+.RequireAuthorization("AdminOnly")
 .WithName("UpdateUser")
 .WithOpenApi();
 
@@ -306,6 +435,7 @@ app.MapPost("/delete-user/{userId}", async (int userId, SafeVaultContext db) =>
         return Results.StatusCode(StatusCodes.Status500InternalServerError);
     }
 })
+.RequireAuthorization("AdminOnly")
 .WithName("DeleteUser")
 .WithOpenApi();
 
