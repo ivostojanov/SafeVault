@@ -143,6 +143,222 @@ app.MapPost("/login", async (LoginRequest request, IAuthenticationService authSe
 
 // ============ PROTECTED ENDPOINTS ============
 
+// GET /admin/dashboard - Admin Dashboard (Admin-only access)
+app.MapGet("/admin/dashboard", async (SafeVaultContext db) =>
+{
+    // Gather statistics for admin dashboard
+    var totalUsers = await db.Users.CountAsync();
+    var activeUsers = await db.Users.CountAsync(u => u.IsActive);
+    var inactiveUsers = totalUsers - activeUsers;
+    var adminCount = await db.Users.CountAsync(u => u.Role == "Admin");
+    var regularUserCount = await db.Users.CountAsync(u => u.Role == "User");
+    
+    // Recent registrations (last 30 days)
+    var thirtyDaysAgo = DateTime.UtcNow.AddDays(-30);
+    var recentRegistrations = await db.Users
+        .Where(u => u.CreatedAt >= thirtyDaysAgo)
+        .CountAsync();
+    
+    // Users who logged in recently (last 7 days)
+    var sevenDaysAgo = DateTime.UtcNow.AddDays(-7);
+    var activeInLastWeek = await db.Users
+        .Where(u => u.LastLoginAt >= sevenDaysAgo)
+        .CountAsync();
+    
+    // List of all users with their details (admin view)
+    var usersList = await db.Users
+        .OrderByDescending(u => u.CreatedAt)
+        .Select(u => new
+        {
+            u.UserID,
+            Username = System.Web.HttpUtility.HtmlEncode(u.Username),
+            Email = System.Web.HttpUtility.HtmlEncode(u.Email),
+            u.Role,
+            u.IsActive,
+            u.CreatedAt,
+            u.LastLoginAt
+        })
+        .ToListAsync();
+
+    return Results.Ok(new
+    {
+        success = true,
+        message = "Admin dashboard data retrieved successfully",
+        statistics = new
+        {
+            totalUsers,
+            activeUsers,
+            inactiveUsers,
+            adminCount,
+            regularUserCount,
+            recentRegistrations = new
+            {
+                count = recentRegistrations,
+                period = "Last 30 days"
+            },
+            recentActivity = new
+            {
+                count = activeInLastWeek,
+                period = "Last 7 days"
+            }
+        },
+        users = usersList
+    });
+})
+.RequireAuthorization("AdminOnly")
+.WithName("AdminDashboard")
+.WithOpenApi()
+.WithTags("Admin");
+
+// POST /admin/users/{userId}/activate - Activate user account (Admin-only)
+app.MapPost("/admin/users/{userId}/activate", async (int userId, SafeVaultContext db) =>
+{
+    if (userId <= 0)
+    {
+        return Results.BadRequest(new { success = false, error = "Invalid user ID" });
+    }
+
+    try
+    {
+        var user = await db.Users.Where(u => u.UserID == userId).FirstOrDefaultAsync();
+
+        if (user == null)
+        {
+            return Results.NotFound(new { success = false, error = "User not found" });
+        }
+
+        user.IsActive = true;
+        await db.SaveChangesAsync();
+
+        return Results.Ok(new
+        {
+            success = true,
+            message = $"User '{user.Username}' has been activated",
+            user = new
+            {
+                user.UserID,
+                Username = System.Web.HttpUtility.HtmlEncode(user.Username),
+                user.IsActive
+            }
+        });
+    }
+    catch
+    {
+        return Results.StatusCode(StatusCodes.Status500InternalServerError);
+    }
+})
+.RequireAuthorization("AdminOnly")
+.WithName("ActivateUser")
+.WithOpenApi()
+.WithTags("Admin");
+
+// POST /admin/users/{userId}/deactivate - Deactivate user account (Admin-only)
+app.MapPost("/admin/users/{userId}/deactivate", async (int userId, SafeVaultContext db) =>
+{
+    if (userId <= 0)
+    {
+        return Results.BadRequest(new { success = false, error = "Invalid user ID" });
+    }
+
+    try
+    {
+        var user = await db.Users.Where(u => u.UserID == userId).FirstOrDefaultAsync();
+
+        if (user == null)
+        {
+            return Results.NotFound(new { success = false, error = "User not found" });
+        }
+
+        // Prevent deactivating the last admin
+        if (user.Role == "Admin")
+        {
+            var adminCount = await db.Users.CountAsync(u => u.Role == "Admin" && u.IsActive);
+            if (adminCount <= 1)
+            {
+                return Results.BadRequest(new 
+                { 
+                    success = false, 
+                    error = "Cannot deactivate the last active admin account" 
+                });
+            }
+        }
+
+        user.IsActive = false;
+        await db.SaveChangesAsync();
+
+        return Results.Ok(new
+        {
+            success = true,
+            message = $"User '{user.Username}' has been deactivated",
+            user = new
+            {
+                user.UserID,
+                Username = System.Web.HttpUtility.HtmlEncode(user.Username),
+                user.IsActive
+            }
+        });
+    }
+    catch
+    {
+        return Results.StatusCode(StatusCodes.Status500InternalServerError);
+    }
+})
+.RequireAuthorization("AdminOnly")
+.WithName("DeactivateUser")
+.WithOpenApi()
+.WithTags("Admin");
+
+// POST /admin/users/{userId}/promote - Promote user to admin (Admin-only)
+app.MapPost("/admin/users/{userId}/promote", async (int userId, SafeVaultContext db) =>
+{
+    if (userId <= 0)
+    {
+        return Results.BadRequest(new { success = false, error = "Invalid user ID" });
+    }
+
+    try
+    {
+        var user = await db.Users.Where(u => u.UserID == userId).FirstOrDefaultAsync();
+
+        if (user == null)
+        {
+            return Results.NotFound(new { success = false, error = "User not found" });
+        }
+
+        if (user.Role == "Admin")
+        {
+            return Results.BadRequest(new 
+            { 
+                success = false, 
+                error = "User is already an admin" 
+            });
+        }
+
+        user.Role = "Admin";
+        await db.SaveChangesAsync();
+
+        return Results.Ok(new
+        {
+            success = true,
+            message = $"User '{user.Username}' has been promoted to Admin",
+            user = new
+            {
+                user.UserID,
+                Username = System.Web.HttpUtility.HtmlEncode(user.Username),
+                user.Role
+            }
+        });
+    }
+    catch
+    {
+        return Results.StatusCode(StatusCodes.Status500InternalServerError);
+    }
+})
+.RequireAuthorization("AdminOnly")
+.WithName("PromoteToAdmin")
+.WithOpenApi()
+.WithTags("Admin");
+
 // POST endpoint for form submission with secure input validation
 app.MapPost("/submit", async (HttpContext context, SafeVaultContext db, IInputValidationService validator) =>
 {
