@@ -6,6 +6,8 @@ namespace SafeVault.Services
     public interface IInputValidationService
     {
         ValidationResult ValidateUser(string username, string email);
+        bool IsValidUsername(string username);
+        bool IsValidEmail(string email);
     }
 
     public class ValidationResult
@@ -69,7 +71,7 @@ namespace SafeVault.Services
         /// Validates username format using regex to prevent SQL injection and XSS.
         /// Restricts to alphanumeric characters, underscores, hyphens, and dots.
         /// </summary>
-        private bool IsValidUsername(string username)
+        public bool IsValidUsername(string username)
         {
             // Pattern: only alphanumeric, underscore, hyphen, and dot
             // This prevents SQL injection and XSS payloads
@@ -81,7 +83,7 @@ namespace SafeVault.Services
         /// Validates email format using RFC 5322 compliant regex.
         /// Prevents malicious email payloads that could be used in attacks.
         /// </summary>
-        private bool IsValidEmail(string email)
+        public bool IsValidEmail(string email)
         {
             try
             {
